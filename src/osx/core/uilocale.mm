@@ -20,6 +20,7 @@
 
 #if wxUSE_INTL
 
+#include "wx/log.h"
 #include "wx/uilocale.h"
 #include "wx/private/uilocale.h"
 
@@ -76,7 +77,7 @@ public:
     {
     }
 
-    ~wxUILocaleImplCF() wxOVERRIDE
+    ~wxUILocaleImplCF() override
     {
         [m_nsloc release];
     }
@@ -86,28 +87,59 @@ public:
         // Surprisingly, localeWithLocaleIdentifier: always succeeds, even for
         // completely invalid strings, so we need to check if the name is
         // actually in the list of the supported locales ourselves.
-        static wxCFRef<CFArrayRef>
-            all((CFArrayRef)[[NSLocale availableLocaleIdentifiers] retain]);
+        bool isAvailable = false;
+        for ( id nsLocId in [NSLocale availableLocaleIdentifiers] )
+        {
+            // We can't simply compare the names here because the list returned
+            // by NSLocale is incomplete and doesn't contain all synonyms, e.g.
+            // it only contains "zh_Hant_TW" but not "zh_TW" itself, so we need
+            // to do our own matching.
+            auto strId = wxCFStringRef::AsString(nsLocId);
+
+            // Currently FromTag() doesn't deal with "lang_script_region"
+            // format and only supports "lang-script_region", but can parse
+            // both "lang_region" and "lang-region" correctly, so ensure we
+            // pass it something it can deal with.
+            strId.Replace("_", "-", false /* only the first one */);
+
+            const auto availId = wxLocaleIdent::FromTag(strId);
+            if ( availId.IsEmpty() )
+            {
+                wxLogDebug("Failed to parse locale identifier \"%s\"", strId);
+                continue;
+            }
+
+            // We ignore the other components because we consider that locale
+            // creation will succeed even if they don't match exactly, but the
+            // language and the region must match (even though the latter one
+            // might be empty).
+            if ( availId.GetLanguage() == locId.GetLanguage() &&
+                    availId.GetRegion() == locId.GetRegion() )
+            {
+                isAvailable = true;
+                break;
+            }
+        }
+
+        if ( !isAvailable )
+            return nullptr;
 
         wxCFStringRef cfName(locId.GetName());
-        if ( ![(NSArray*)all.get() containsObject: cfName.AsNSString()] )
-            return NULL;
-
         auto nsloc = [NSLocale localeWithLocaleIdentifier: cfName.AsNSString()];
         if ( !nsloc )
-            return NULL;
+            return nullptr;
 
         return new wxUILocaleImplCF(nsloc);
     }
 
-    void Use() wxOVERRIDE;
-    wxString GetName() const wxOVERRIDE;
-    wxLocaleIdent GetLocaleId() const wxOVERRIDE;
-    wxString GetInfo(wxLocaleInfo index, wxLocaleCategory cat) const wxOVERRIDE;
-    wxString GetLocalizedName(wxLocaleName name, wxLocaleForm form) const wxOVERRIDE;
-    wxLayoutDirection GetLayoutDirection() const wxOVERRIDE;
+    void Use() override;
+    wxString GetName() const override;
+    wxLocaleIdent GetLocaleId() const override;
+    wxString GetInfo(wxLocaleInfo index, wxLocaleCategory cat) const override;
+    wxString GetLocalizedName(wxLocaleName name, wxLocaleForm form) const override;
+    wxLayoutDirection GetLayoutDirection() const override;
     int CompareStrings(const wxString& lhs, const wxString& rhs,
-                       int flags) const wxOVERRIDE;
+                       int flags) const override;
 
 private:
     NSLocale* const m_nsloc;
